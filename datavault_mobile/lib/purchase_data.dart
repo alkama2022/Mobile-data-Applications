@@ -1,3 +1,6 @@
+// Demo catalog for offline UI development only.
+// Production prices/products must come from VTpass (vtu-verify/vtu-pay Edge
+// Functions) or a server-driven catalog. Do not treat these as live prices.
 import 'models.dart';
 
 class Product {

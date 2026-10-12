@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'config.dart';
+import 'connectivity_service.dart';
 import 'theme.dart';
 import 'account_store.dart';
 import 'screens/onboarding.dart';
@@ -111,58 +113,91 @@ class _AppScaffoldState extends State<AppScaffold> {
     final cardColor = dark ? AppColors.darkCard : AppColors.card;
     final borderColor = dark ? AppColors.darkBorder : AppColors.border;
 
-    return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 20,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(titles.$1, style: const TextStyle(fontSize: 12, color: AppColors.mutedForeground, fontWeight: FontWeight.w600)),
-            if (idx != 0) Text(titles.$2, style: displayStyleOf(context, size: 20)),
-          ],
-        ),
-        actions: [
-          ListenableBuilder(
-            listenable: accountStore,
-            builder: (ctx, child) => IconButton(
-              onPressed: () => context.push('/app/notifications'),
-              icon: Badge(
-                isLabelVisible: accountStore.unread > 0,
-                label: Text('${accountStore.unread}'),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(999)),
-                  child: const Icon(Icons.notifications_outlined),
+    return ListenableBuilder(
+      listenable: connectivityService,
+      builder: (context, child) {
+        return Scaffold(
+          appBar: AppBar(
+            titleSpacing: 20,
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(titles.$1, style: const TextStyle(fontSize: 12, color: AppColors.mutedForeground, fontWeight: FontWeight.w600)),
+                if (idx != 0) Text(titles.$2, style: displayStyleOf(context, size: 20)),
+              ],
+            ),
+            actions: [
+              ListenableBuilder(
+                listenable: accountStore,
+                builder: (ctx, child) => IconButton(
+                  onPressed: () => context.push('/app/notifications'),
+                  icon: Badge(
+                    isLabelVisible: accountStore.unread > 0,
+                    label: Text('${accountStore.unread}'),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(999)),
+                      child: const Icon(Icons.notifications_outlined),
+                    ),
+                  ),
                 ),
               ),
+            ],
+          ),
+          // Offline banner — shown above body, disappears automatically when
+          // connectivity is restored.
+          body: Column(
+            children: [
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                child: connectivityService.isOnline
+                    ? const SizedBox.shrink()
+                    : Container(
+                        key: const ValueKey('offline'),
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                        color: AppColors.destructive,
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.wifi_off_rounded, color: Colors.white, size: 16),
+                            SizedBox(width: 8),
+                            Text(
+                              'No internet connection',
+                              style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700),
+                            ),
+                          ],
+                        ),
+                      ),
+              ),
+              Expanded(child: widget.child),
+            ],
+          ),
+          bottomNavigationBar: Container(
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: borderColor),
+              boxShadow: [BoxShadow(color: AppColors.brand.withValues(alpha: dark ? 0.3 : 0.12), blurRadius: 24, offset: const Offset(0, 10))],
+            ),
+            child: NavigationBar(
+              height: 64,
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              selectedIndex: idx,
+              onDestinationSelected: (i) => context.go(_paths[i]),
+              indicatorColor: AppColors.primarySoft,
+              destinations: const [
+                NavigationDestination(icon: Icon(Icons.home_rounded), label: 'Home'),
+                NavigationDestination(icon: Icon(Icons.grid_view_rounded), label: 'Services'),
+                NavigationDestination(icon: Icon(Icons.receipt_long_rounded), label: 'Activity'),
+                NavigationDestination(icon: Icon(Icons.person_rounded), label: 'Profile'),
+              ],
             ),
           ),
-        ],
-      ),
-      body: widget.child,
-      bottomNavigationBar: Container(
-        margin: const EdgeInsets.fromLTRB(12, 0, 12, 14),
-        decoration: BoxDecoration(
-          color: cardColor,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: borderColor),
-          boxShadow: [BoxShadow(color: AppColors.brand.withValues(alpha: dark ? 0.3 : 0.12), blurRadius: 24, offset: const Offset(0, 10))],
-        ),
-        child: NavigationBar(
-          height: 64,
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          selectedIndex: idx,
-          onDestinationSelected: (i) => context.go(_paths[i]),
-          indicatorColor: AppColors.primarySoft,
-          destinations: const [
-            NavigationDestination(icon: Icon(Icons.home_rounded), label: 'Home'),
-            NavigationDestination(icon: Icon(Icons.grid_view_rounded), label: 'Services'),
-            NavigationDestination(icon: Icon(Icons.receipt_long_rounded), label: 'Activity'),
-            NavigationDestination(icon: Icon(Icons.person_rounded), label: 'Profile'),
-          ],
-        ),
-      ),
+        );
+      },
     );
   }
 }

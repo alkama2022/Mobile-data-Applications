@@ -34,6 +34,14 @@ const BASE = Deno.env.get('VTPASS_BASE_URL') ?? 'https://vtpass.com';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+// XOR-based constant-time string comparison — prevents timing attacks.
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 function serviceIDFor(kind: string, providerId: string): string {
   switch (kind) {
     case 'airtime': return `${providerId}-airtime`;
@@ -65,11 +73,15 @@ function nextAfter(freq: string, from: Date): Date {
 
 serve(async (req) => {
   // Only accept POST from authorised callers (pg_cron / dashboard).
-  // The function is deployed with --no-verify-jwt but we check the
-  // Authorization header for the service-role key as a lightweight guard.
+  // The function is deployed with --no-verify-jwt but we verify the
+  // Authorization header against the service-role key using a constant-time
+  // comparison to prevent timing attacks.
   const authHeader = req.headers.get('Authorization') ?? '';
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-  if (!authHeader.includes(serviceKey)) {
+  const provided = authHeader.startsWith('Bearer ')
+    ? authHeader.slice('Bearer '.length).trim()
+    : authHeader.trim();
+  if (!serviceKey || !constantTimeEqual(provided, serviceKey)) {
     return Response.json({ ok: false, message: 'Unauthorized' }, { status: 401 });
   }
 

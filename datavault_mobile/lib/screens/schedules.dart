@@ -4,6 +4,7 @@ import '../format.dart';
 import '../models.dart';
 import '../purchase_data.dart';
 import '../services/schedule_service.dart';
+import '../app_logger.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
@@ -28,15 +29,37 @@ class _SchedulesScreenState extends State<SchedulesScreen> {
     setState(() => _loading = true);
     try {
       _items = await ScheduleService.fetch();
-    } catch (_) {}
+    } catch (e, stack) {
+      logError('SchedulesScreen._load failed', e, stack);
+      if (mounted) showAppToast(context, e);
+    }
     if (mounted) setState(() => _loading = false);
   }
 
   Future<void> _runDue() async {
-    final n = await ScheduleService.runDue();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(n == 0 ? 'Nothing due yet' : 'Ran $n scheduled payment${n > 1 ? 's' : ''}')));
-    _load();
+    if (!AppConfig.useEdge) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Deploy schedule-cron Edge Function and enable USE_EDGE to run server-side schedules.')),
+      );
+      return;
+    }
+    try {
+      final res = await AppConfig.client.functions.invoke('schedule-cron', body: {});
+      final data = Map<String, dynamic>.from(res.data as Map);
+      final ran = data['ran'] as int? ?? 0;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(ran == 0
+              ? 'Nothing due yet'
+              : 'Ran $ran scheduled payment${ran > 1 ? 's' : ''}')));
+      _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
   }
 
   void _openCreate() {

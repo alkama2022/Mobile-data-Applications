@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../config.dart';
+import '../app_logger.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -37,7 +38,9 @@ class _BeneficiariesScreenState extends State<BeneficiariesScreen> {
         _items = (res as List).cast<Map<String, dynamic>>();
         _loading = false;
       });
-    } catch (_) {
+    } catch (e, stack) {
+      logError('BeneficiariesScreen._load failed', e, stack);
+      if (mounted) showAppToast(context, e);
       setState(() => _loading = false);
     }
   }
@@ -126,7 +129,18 @@ class _BeneficiariesScreenState extends State<BeneficiariesScreen> {
                           IconButton(
                             icon: const Icon(Icons.send_rounded, size: 18, color: AppColors.primary),
                             tooltip: 'Pay again',
-                            onPressed: () => context.push('/app/services/${b['kind']}'),
+                            onPressed: () {
+                              // Prefer provider_id (exact match); fall back to
+                              // provider name which PurchaseScreen also handles.
+                              final pid = (b['provider_id']?.toString().isNotEmpty == true)
+                                  ? b['provider_id'].toString()
+                                  : (b['provider']?.toString() ?? '');
+                              context.push(
+                                '/app/services/${b['kind']}'
+                                '?recipient=${Uri.encodeComponent(b['recipient']?.toString() ?? '')}'
+                                '&provider=${Uri.encodeComponent(pid)}',
+                              );
+                            },
                           ),
                           IconButton(
                             icon: const Icon(Icons.delete_outline_rounded, size: 18, color: AppColors.destructive),

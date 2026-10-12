@@ -1,5 +1,6 @@
 import '../config.dart';
 import '../format.dart';
+import '../app_logger.dart';
 import 'vtu_service.dart';
 
 class ScheduleService {
@@ -100,7 +101,8 @@ class ScheduleService {
           }).eq('id', s['id']);
         }
         ran++;
-      } catch (_) {
+      } catch (e, stack) {
+        logError('ScheduleService.runDue failed for ${s['id']}', e, stack);
         // leave for next run; do not deactivate
       }
     }

@@ -22,20 +22,20 @@ class _AuthScreenState extends State<AuthScreen> {
   bool busy = false;
 
   Future<void> submit() async {
-    if (!email.text.contains('@')) { _toast('Enter a valid email address'); return; }
+    if (!email.text.contains('@')) { showAppToast(context, 'Enter a valid email address'); return; }
     setState(() => busy = true);
     try {
       if (mode == 'forgot') {
         await AppConfig.client.auth.resetPasswordForEmail(email.text.trim());
-        _toast('Check your email for the reset link');
+        showAppToast(context, 'Check your email for the reset link');
         setState(() => mode = 'signin');
         return;
       }
-      if (password.text.length < 8) { _toast('Password must be at least 8 characters'); return; }
+      if (password.text.length < 8) { showAppToast(context, 'Password must be at least 8 characters'); return; }
       if (mode == 'signup') {
-        if (name.text.trim().length < 2) { _toast('Enter your full name'); return; }
+        if (name.text.trim().length < 2) { showAppToast(context, 'Enter your full name'); return; }
         final res = await AppConfig.client.auth.signUp(email: email.text.trim(), password: password.text, data: {'full_name': name.text.trim()});
-        if (res.session == null) { _toast('Check your email to confirm your account'); setState(() => mode = 'signin'); return; }
+        if (res.session == null) { showAppToast(context, 'Check your email to confirm your account'); setState(() => mode = 'signin'); return; }
       } else {
         await AppConfig.client.auth.signInWithPassword(email: email.text.trim(), password: password.text);
       }
@@ -49,14 +49,14 @@ class _AuthScreenState extends State<AuthScreen> {
         if (mounted) context.go('/app');
         unawaited(accountStore.refresh());
       } else {
-        _toast(msg);
+        showAppToast(context, msg);
       }
     } finally {
       if (mounted) setState(() => busy = false);
     }
   }
 
-  void _toast(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  void showAppToast(context, String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
   @override
   Widget build(BuildContext context) {

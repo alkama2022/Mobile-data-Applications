@@ -1,5 +1,8 @@
+import 'dart:async';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'account_store.dart';
 import 'app.dart';
 import 'config.dart';
 import 'theme.dart';
@@ -8,11 +11,16 @@ import 'theme_store.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Fail fast on mis-configured builds before any UI is shown.
-  AppConfig.assertConfigured();
+  AppConfig.validateConfiguration();
   await Supabase.initialize(
     url: AppConfig.supabaseUrl,
     anonKey: AppConfig.supabaseAnonKey,
   );
+  // Prime the store from on-disk cache so the home screen renders instantly.
+  // Fire-and-forget — the widget tree starts while the background refresh runs.
+  if (AppConfig.client.auth.currentUser != null) {
+    unawaited(accountStore.loadCacheThenRefresh());
+  }
   runApp(const DataVaultApp());
 }
 

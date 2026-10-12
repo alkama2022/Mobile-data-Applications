@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import '../account_store.dart';
+import '../app_logger.dart';
 import '../config.dart';
 import '../format.dart';
 import '../models.dart';
 import '../purchase_data.dart';
 import '../services/vtu_service.dart';
 import '../theme.dart';
+import '../validators.dart';
 import '../widgets.dart';
 
 class BulkDispatchScreen extends StatefulWidget {
@@ -25,15 +27,23 @@ class _BulkDispatchScreenState extends State<BulkDispatchScreen> {
   double progress = 0;
   List<String> results = [];
 
-  final _phone = RegExp(r'^(?:\+234|234|0)[789][01]\d{8}$');
+  static const int maxRecipients = 100;
 
   List<ProviderDef> get _providers => providersByKind[kind] ?? [];
   List<String> get numbers => recipientsCtrl.text
       .split(RegExp(r'[\n,;]+'))
       .map((e) => e.trim())
       .where((e) => e.isNotEmpty)
+      .take(maxRecipients + 1)
       .toList();
-  List<String> get valid => numbers.where((n) => _phone.hasMatch(n.replaceAll(RegExp(r'[\s()-]'), ''))).toList();
+  List<String> get valid =>
+      numbers.where((n) => isValidNigerianPhone(n)).take(maxRecipients).toList();
+  bool get overLimit => recipientsCtrl.text
+          .split(RegExp(r'[\n,;]+'))
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .length >
+      maxRecipients;
   int get perKobo => kind == ServiceKind.data ? (product?.priceKobo ?? 0) : ((int.tryParse(amountCtrl.text.replaceAll(RegExp(r'\D'), '')) ?? 0) * 100);
   int get totalKobo => perKobo * valid.length;
 
@@ -50,8 +60,8 @@ class _BulkDispatchScreenState extends State<BulkDispatchScreen> {
     if (provider == null || valid.isEmpty || perKobo < 10000) return;
     final user = AppConfig.client.auth.currentUser;
     if (user == null) return;
-    if (accountStore.walletBalance < totalKobo && AppConfig.useEdge) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Insufficient wallet balance')));
+    if (accountStore.walletBalance < totalKobo) {
+      if (mounted) showAppToast(context, 'Insufficient wallet balance');
       return;
     }
     setState(() {
@@ -94,16 +104,17 @@ class _BulkDispatchScreenState extends State<BulkDispatchScreen> {
           });
         }
         ok++;
-        results.add('✓ $to');
-      } catch (e) {
-        results.add('✗ $to — ${e.toString().replaceFirst('Exception: ', '')}');
+        results.add('OK $to');
+      } catch (e, stack) {
+        logError('BulkDispatch failed for $to', e, stack);
+        results.add('FAIL $to — ${friendlyError(e)}');
       }
       setState(() => progress = (i + 1) / valid.length);
     }
     await accountStore.refresh();
     if (mounted) {
       setState(() => running = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Done: $ok/${valid.length} sent · Batch $batch')));
+      showAppToast(context, 'Done: $ok/${valid.length} sent · Batch $batch');
     }
   }
 
@@ -178,13 +189,16 @@ class _BulkDispatchScreenState extends State<BulkDispatchScreen> {
               onPressed: (running || valid.isEmpty) ? null : _run,
             ),
           ),
+          if (overLimit)
+            Text('Maximum $maxRecipients recipients per batch.',
+                style: const TextStyle(color: AppColors.destructive, fontWeight: FontWeight.w700, fontSize: 12)),
           if (results.isNotEmpty) ...[
             const SizedBox(height: 16),
             Text('Results', style: displayStyleOf(context,size: 16)),
             const SizedBox(height: 8),
             ...results.map((r) => Padding(
                   padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Text(r, style: TextStyle(fontSize: 12, color: r.startsWith('✓') ? AppColors.success : AppColors.destructive)),
+                  child: Text(r, style: TextStyle(fontSize: 12, color: r.startsWith('OK') ? AppColors.success : AppColors.destructive)),
                 )),
           ],
         ],

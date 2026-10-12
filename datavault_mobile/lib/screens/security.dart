@@ -3,9 +3,10 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import '../pin_storage.dart';
+import '../app_logger.dart';
 
 // ── PIN hashing helpers ───────────────────────────────────────────────────────
 
@@ -39,10 +40,6 @@ class PinScreen extends StatefulWidget {
 
 class _PinScreenState extends State<PinScreen>
     with SingleTickerProviderStateMixin {
-  static const _hashKey = 'app_pin_hash';
-  static const _saltKey = 'app_pin_salt';
-  static const _pinEnabledKey = 'pin_enabled';
-
   String _entered = '';
   String? _firstPin; // used during setup confirmation step
   String _error = '';
@@ -84,7 +81,6 @@ class _PinScreenState extends State<PinScreen>
   }
 
   Future<void> _onComplete() async {
-    final prefs = await SharedPreferences.getInstance();
 
     if (widget.setup) {
       if (!_confirming) {
@@ -99,9 +95,13 @@ class _PinScreenState extends State<PinScreen>
         if (_entered == _firstPin) {
           final salt = _generateSalt();
           final hash = _hashPin(salt, _entered);
-          await prefs.setString(_saltKey, salt);
-          await prefs.setString(_hashKey, hash);
-          await prefs.setBool(_pinEnabledKey, true);
+          try {
+            await PinStorage.writePin(salt, hash);
+          } catch (e, stack) {
+            logError('PinStorage.writePin failed', e, stack);
+            if (mounted) showAppToast(context, e);
+            return;
+          }
           widget.onSuccess?.call();
         } else {
           _shakeAndClear('PINs do not match. Try again.');
@@ -112,19 +112,44 @@ class _PinScreenState extends State<PinScreen>
         }
       }
     } else {
-      // Verify — hash the entered PIN with the stored salt and compare.
-      final salt = prefs.getString(_saltKey) ?? '';
-      final storedHash = prefs.getString(_hashKey) ?? '';
+      // Verify — check lockout first, then hash the entered PIN.
+      final prefs = await SharedPreferences.getInstance();
+      final lockUntilMs = prefs.getInt('pin_lock_until_ms') ?? 0;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (now < lockUntilMs) {
+        final secsLeft = ((lockUntilMs - now) / 1000).ceil();
+        _shakeAndClear('Too many attempts. Try again in $secsLeft s.');
+        return;
+      }
+
+      final salt = await PinStorage.readSalt() ?? '';
+      final storedHash = await PinStorage.readHash() ?? '';
       if (salt.isEmpty || storedHash.isEmpty) {
-        // No PIN set — treat as success so the user isn't locked out.
         widget.onSuccess?.call();
         return;
       }
       final enteredHash = _hashPin(salt, _entered);
       if (enteredHash == storedHash) {
+        // Correct — reset failure counter.
+        await prefs.remove('pin_fail_count');
+        await prefs.remove('pin_lock_until_ms');
         widget.onSuccess?.call();
       } else {
-        _shakeAndClear('Incorrect PIN. Try again.');
+        final fails = (prefs.getInt('pin_fail_count') ?? 0) + 1;
+        await prefs.setInt('pin_fail_count', fails);
+        const maxAttempts = 5;
+        const lockSecs = 60;
+        if (fails >= maxAttempts) {
+          final lockUntil = DateTime.now()
+              .add(const Duration(seconds: lockSecs))
+              .millisecondsSinceEpoch;
+          await prefs.setInt('pin_lock_until_ms', lockUntil);
+          await prefs.remove('pin_fail_count');
+          _shakeAndClear('Too many wrong attempts. Locked for ${lockSecs}s.');
+        } else {
+          _shakeAndClear(
+              'Incorrect PIN. ${maxAttempts - fails} attempt${maxAttempts - fails == 1 ? '' : 's'} left.');
+        }
       }
     }
   }
@@ -280,10 +305,6 @@ class SecurityScreen extends StatefulWidget {
 }
 
 class _SecurityScreenState extends State<SecurityScreen> {
-  static const _hashKey = 'app_pin_hash';
-  static const _saltKey = 'app_pin_salt';
-  static const _pinEnabledKey = 'pin_enabled';
-
   bool _pinEnabled = false;
   bool _loading = true;
 
@@ -294,9 +315,10 @@ class _SecurityScreenState extends State<SecurityScreen> {
   }
 
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
+    final enabled = await PinStorage.isPinEnabled();
+    if (!mounted) return;
     setState(() {
-      _pinEnabled = prefs.getBool(_pinEnabledKey) ?? false;
+      _pinEnabled = enabled;
       _loading = false;
     });
   }
@@ -309,16 +331,14 @@ class _SecurityScreenState extends State<SecurityScreen> {
           onSuccess: () {
             Navigator.of(context).pop();
             setState(() => _pinEnabled = true);
-            _showSnack('PIN protection enabled');
+            showAppToast(context, 'PIN protection enabled');
           },
         ),
       ));
     } else {
       // Require the user to verify their existing PIN before disabling.
-      final prefs = await SharedPreferences.getInstance();
-      final hasPin = prefs.getBool(_pinEnabledKey) ?? false;
+      final hasPin = await PinStorage.isPinEnabled();
       if (!hasPin) {
-        await prefs.setBool(_pinEnabledKey, false);
         setState(() => _pinEnabled = false);
         return;
       }
@@ -328,14 +348,11 @@ class _SecurityScreenState extends State<SecurityScreen> {
         builder: (_) => PinScreen(
           setup: false,
           onSuccess: () async {
-            final p = await SharedPreferences.getInstance();
-            await p.remove(_hashKey);
-            await p.remove(_saltKey);
-            await p.setBool(_pinEnabledKey, false);
+            await PinStorage.clearPin();
             if (mounted) {
               nav.pop();
               setState(() => _pinEnabled = false);
-              _showSnack('PIN protection disabled');
+              showAppToast(context, 'PIN protection disabled');
             }
           },
         ),
@@ -356,7 +373,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
             setup: true,
             onSuccess: () {
               nav.pop();
-              _showSnack('PIN updated successfully');
+              showAppToast(context, 'PIN updated successfully');
             },
           ),
         )),
@@ -364,8 +381,6 @@ class _SecurityScreenState extends State<SecurityScreen> {
     ));
   }
 
-  void _showSnack(String msg) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
   @override
   Widget build(BuildContext context) {

@@ -1,14 +1,17 @@
 import 'package:flutter/foundation.dart';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import '../config.dart';
 import '../format.dart';
 import '../account_store.dart';
+import '../app_logger.dart';
 import '../models.dart';
 import '../services/vtu_service.dart';
 import '../gift_helper.dart';
 import '../purchase_data.dart';
+import '../validators.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
@@ -63,13 +66,26 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
   bool saveBeneficiary = false;
   String search = '';
   Map<String, dynamic>? transaction;
-
-  final _phonePattern = RegExp(r'^(?:\+234|234|0)[789][01]\d{8}$');
+  // Tracks the reference of the in-flight VTpass request so we can poll
+  // vtu-query if the response times out and the tx stays 'pending'.
+  String? _pendingReference;
 
   @override
   void initState() {
     super.initState();
-    service = ServiceKind.fromDb(widget.kind);
+    final parsed = ServiceKind.fromDbOrNull(widget.kind);
+    if (parsed == null) {
+      logError('PurchaseScreen unknown kind', widget.kind);
+      service = ServiceKind.airtime;
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          showAppToast(context, 'Unsupported service: ${widget.kind}');
+          context.pop();
+        });
+      }
+    } else {
+      service = parsed;
+    }
     stages = _stagesFor(service);
     // 1-tap repeat pre-fill
     final providers = providersByKind[service] ?? [];
@@ -106,8 +122,9 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
   bool get isPhone => service == ServiceKind.airtime || service == ServiceKind.data;
   bool get requiresVerification => service == ServiceKind.electricity || service == ServiceKind.cable || service == ServiceKind.betting;
   bool get detailsValid => isPhone
-      ? _phonePattern.hasMatch(recipient.text.replaceAll(RegExp(r'[\s()-]'), ''))
-      : recipient.text.trim().length >= (service == ServiceKind.education ? 4 : 6);
+      ? isValidNigerianPhone(recipient.text)
+      : isValidGenericRecipient(recipient.text,
+          minLength: service == ServiceKind.education ? 4 : 6);
   int get totalKobo => product?.priceKobo ?? ((int.tryParse(amount) ?? 0) * 100);
   bool get amountValid => totalKobo >= 10000;
 
@@ -132,7 +149,7 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
       // Demo fallback (no secrets configured) - debug only.
       if (kReleaseMode) {
         setState(() => verifying = false);
-        _toast('Live verification not configured. Deploy Edge Functions first.');
+        if (mounted) showAppToast(context, 'Live verification not configured. Deploy Edge Functions first.');
         return;
       }
       await Future.delayed(const Duration(milliseconds: 700));
@@ -141,27 +158,30 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
           verifying = false;
           verified = null;
         });
-        _toast('We could not verify these details. Please check and try again.');
+        if (mounted) showAppToast(context, 'We could not verify these details. Please check and try again.');
         return;
       }
       final suffix = recipient.text.replaceAll(RegExp(r'\D'), '');
       setState(() {
+        // Demo-only placeholder names. Clearly labelled so they can never be
+        // mistaken for verified VTpass data in production.
         verified = {
           'name': service == ServiceKind.electricity
-              ? 'Chinedu Okafor'
+              ? '[DEMO] Chinedu O. (unverified)'
               : service == ServiceKind.cable
-                  ? 'Adaeze Williams'
-                  : 'Verified customer ${suffix.substring(suffix.length > 4 ? suffix.length - 4 : 0)}',
-          if (service == ServiceKind.electricity) 'address': '12 Unity Crescent, Abuja',
+                  ? '[DEMO] Adaeze W. (unverified)'
+                  : 'Demo customer ${suffix.substring(suffix.length > 4 ? suffix.length - 4 : 0)} (unverified)',
+          if (service == ServiceKind.electricity) 'address': '[DEMO] 12 Unity Crescent, Abuja',
         };
         verifying = false;
       });
-    } catch (e) {
+    } catch (e, stack) {
+      logError('PurchaseScreen.verify failed', e, stack);
       setState(() {
         verifying = false;
         verified = null;
       });
-      _toast(e.toString().replaceFirst('Exception: ', ''));
+      if (mounted) showAppToast(context, e);
     }
   }
 
@@ -175,12 +195,60 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
     };
   }
 
+  /// Polls vtu-query every 5 s for up to 60 s when a transaction is stuck
+  /// in 'pending' (e.g. Deno Edge Function timed out mid-request).
+  /// Updates the local transaction map and advances to the success stage
+  /// automatically when the provider confirms delivery.
+  Future<void> _pollPending(String ref) async {
+    const maxAttempts = 12; // 12 × 5 s = 60 s
+    for (var i = 0; i < maxAttempts; i++) {
+      await Future.delayed(const Duration(seconds: 5));
+      if (!mounted) return;
+      try {
+        final result = await VtuService.query(ref);
+        final code = result['vtpass']?['code']?.toString() ?? '';
+        if (code == '000') {
+          // VTpass confirmed success — fetch the updated transaction row.
+          final txRow = await AppConfig.client
+              .from('transactions')
+              .select()
+              .eq('reference', ref)
+              .maybeSingle();
+          if (txRow != null && mounted) {
+            setState(() {
+              transaction = Map<String, dynamic>.from(txRow);
+              stageIndex = stages.length + 1; // success
+            });
+            await accountStore.refreshWalletAndTransactions();
+          }
+          return;
+        } else if (code.isNotEmpty && code != '000') {
+          // Definitive failure — go back to review.
+          if (mounted) {
+            if (mounted) showAppToast(context, 'Payment failed: ${result['vtpass']?['response_description'] ?? 'Provider declined'}');
+            setState(() => stageIndex = stages.length - 1);
+          }
+          return;
+        }
+        // code is empty or still pending — keep polling
+      } catch (_) {
+        // network hiccup — keep polling
+      }
+    }
+    // Timed out — show a message and go back to review
+    if (mounted) {
+      showAppToast(context, 'Payment status unknown. Check your Activity tab in a moment.');
+      setState(() => stageIndex = stages.length - 1);
+      await accountStore.refreshWalletAndTransactions();
+    }
+  }
+
   Future<void> pay() async {
     if (provider == null || !amountValid) return;
     setState(() => stageIndex = stages.length); // processing
     final user = AppConfig.client.auth.currentUser;
     if (user == null) {
-      _toast('Please sign in again.');
+      if (mounted) showAppToast(context, 'Please sign in again.');
       setState(() => stageIndex = stages.length - 1);
       return;
     }
@@ -199,16 +267,19 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
       };
       late final Map<String, dynamic> data;
       if (AppConfig.useEdge) {
+        final ref = generateReference();
+        _pendingReference = ref;
         data = await VtuService.pay(
           kind: service.dbValue,
           title: product?.name ?? service.title,
           recipient: recipient.text.trim(),
           amountKobo: totalKobo,
-          reference: generateReference(),
+          reference: ref,
           provider: provider!.name,
           vtpass: _vtpassPayload(),
           extraMetadata: metadata,
         );
+        _pendingReference = null;
       } else {
         if (kReleaseMode) throw Exception('Live payments not configured. Deploy vtu-pay Edge Function and rebuild with --dart-define=USE_EDGE=true.');
         data = await AppConfig.client.from('transactions').insert({
@@ -230,20 +301,29 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
           'nickname': verified?['name'] ?? provider!.shortName,
           'recipient': recipient.text.trim(),
           'provider': provider!.name,
-        });
+          'provider_id': provider!.id,
+        }, onConflict: 'user_id,kind,recipient');
       }
       setState(() {
         transaction = data;
         stageIndex = stages.length + 1; // success
       });
-      await accountStore.refresh();
-    } catch (e) {
-      _toast(e.toString().replaceFirst('Exception: ', ''));
+      await accountStore.refreshWalletAndTransactions();
+    } catch (e, stack) {
+      logError('PurchaseScreen.pay failed', e, stack);
+      // If we assigned a reference but got a timeout/network error, the VTpass
+      // request may have succeeded server-side. Poll to find out.
+      final ref = _pendingReference;
+      _pendingReference = null;
+      if (ref != null && AppConfig.useEdge && mounted) {
+        // Stay on the processing screen and poll instead of showing an error.
+        unawaited(_pollPending(ref));
+        return;
+      }
+      if (mounted) showAppToast(context, e);
       setState(() => stageIndex = stages.length - 1);
     }
   }
-
-  void _toast(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
   @override
   Widget build(BuildContext context) {
@@ -292,7 +372,7 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
                   Text(meta is Map && meta['pin'] is String ? 'PIN / TOKEN' : 'ELECTRICITY TOKEN', style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w800, fontSize: 11)),
                   Row(children: [
                     Expanded(child: Text(token.toString(), style: const TextStyle(fontFamily: 'monospace', fontSize: 18, fontWeight: FontWeight.w800))),
-                    IconButton(onPressed: () { Clipboard.setData(ClipboardData(text: token.toString())); _toast('Copied securely'); }, icon: const Icon(Icons.copy)),
+                    IconButton(onPressed: () { Clipboard.setData(ClipboardData(text: token.toString())); if (context.mounted) showAppToast(context, 'Copied'); }, icon: const Icon(Icons.copy)),
                   ]),
                   if (meta is Map && meta['serialNumber'] is String) Text('Serial: ${meta['serialNumber']}', style: const TextStyle(color: AppColors.mutedForeground, fontSize: 12)),
                 ]),
@@ -603,10 +683,10 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
   }
 
   Widget _receiptRow(String k, String v, {bool bold = false}) => Container(
-        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.border))),
+        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: borderColorOf(context)))),
         padding: const EdgeInsets.symmetric(vertical: 10),
         child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(k, style: const TextStyle(color: AppColors.mutedForeground)),
+          Text(k, style: TextStyle(color: mutedColorOf(context))),
           const SizedBox(width: 16),
           Flexible(child: Text(v, textAlign: TextAlign.right, style: TextStyle(fontWeight: bold ? FontWeight.w800 : FontWeight.w700))),
         ]),

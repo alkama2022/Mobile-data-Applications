@@ -9,7 +9,8 @@ String formatNaira(int kobo) {
 String formatDate(String iso) {
   try {
     return DateFormat('dd MMM yyyy, h:mm a').format(DateTime.parse(iso).toLocal());
-  } catch (_) {
+  } on FormatException {
+    // Unparseable timestamp — show raw value rather than crash the row.
     return iso;
   }
 }

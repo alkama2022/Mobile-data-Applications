@@ -1,6 +1,37 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'app_logger.dart';
 import 'theme.dart';
+
+/// Single toast helper — replaces the copy-pasted `_toast` in 5 screens.
+void showAppToast(BuildContext context, Object errorOrMessage) {
+  final msg = errorOrMessage is String
+      ? errorOrMessage
+      : friendlyError(errorOrMessage);
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+}
+
+/// Single receipt row — replaces `_row` in topup.dart and `_receiptRow` in purchase.dart.
+class ReceiptRow extends StatelessWidget {
+  final String label;
+  final String value;
+  const ReceiptRow(this.label, this.value, {super.key});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: borderColorOf(context)))),
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Text(label, style: TextStyle(color: mutedColorOf(context))),
+          Flexible(
+            child: Text(value,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+                textAlign: TextAlign.end),
+          ),
+        ]),
+      );
+}
 
 class Brand extends StatelessWidget {
   final bool inverse;

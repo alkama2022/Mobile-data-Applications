@@ -17,7 +17,17 @@ enum ServiceKind {
   final String fieldPlaceholder;
   const ServiceKind(this.dbValue, this.title, this.shortTitle, this.description, this.fieldLabel, this.fieldPlaceholder);
 
-  static ServiceKind fromDb(String v) => ServiceKind.values.firstWhere((e) => e.dbValue == v, orElse: () => ServiceKind.airtime);
+  static ServiceKind? fromDbOrNull(String v) {
+    for (final e in ServiceKind.values) {
+      if (e.dbValue == v) return e;
+    }
+    return null;
+  }
+
+  /// Strict parse. Throws on unknown values so bad rows surface instead of
+  /// silently rendering as airtime. Callers that need leniency use fromDbOrNull.
+  static ServiceKind fromDb(String v) =>
+      fromDbOrNull(v) ?? (throw ArgumentError.value(v, 'ServiceKind', 'Unknown service kind'));
 
   IconData get icon {
     switch (this) {

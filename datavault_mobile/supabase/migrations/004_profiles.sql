@@ -52,6 +52,7 @@ create table if not exists public.beneficiaries (
   nickname   text not null default '',
   recipient  text not null,
   provider   text not null default '',
+  provider_id text not null default '',
   created_at timestamptz default now(),
   -- one entry per user+kind+recipient combination
   unique (user_id, kind, recipient)

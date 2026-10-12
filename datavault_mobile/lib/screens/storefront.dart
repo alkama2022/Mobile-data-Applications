@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../gift_helper.dart';
 import '../services/storefront_service.dart';
+import '../app_logger.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
@@ -35,7 +36,9 @@ class _StorefrontScreenState extends State<StorefrontScreen> {
         markup = (m['markup_pct'] as num? ?? 0).toDouble();
         active = (m['active'] as bool? ?? true);
       }
-    } catch (_) {}
+    } catch (e, stack) {
+      logError('StorefrontScreen._load failed', e, stack);
+    }
     if (mounted) setState(() => loading = false);
   }
 
@@ -43,9 +46,10 @@ class _StorefrontScreenState extends State<StorefrontScreen> {
     setState(() => saving = true);
     try {
       await StorefrontService.save(handle: handle.text, displayName: displayName.text, markupPct: markup, active: active);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Storefront saved')));
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))));
+      if (mounted) showAppToast(context, 'Storefront saved');
+    } catch (e, stack) {
+      logError('StorefrontScreen._save failed', e, stack);
+      if (mounted) showAppToast(context, e);
     } finally {
       if (mounted) setState(() => saving = false);
     }

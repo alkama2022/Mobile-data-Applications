@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../account_store.dart';
+import '../app_logger.dart';
 import '../config.dart';
 import '../format.dart';
 import '../services/paystack_service.dart';
@@ -38,7 +39,7 @@ class _TopUpScreenState extends State<TopUpScreen> {
   Future<void> fund() async {
     setState(() => step = _TopUpStep.processing);
     final user = AppConfig.client.auth.currentUser;
-    if (user == null) { _toast('Please sign in again.'); setState(() => step = _TopUpStep.review); return; }
+    if (user == null) { if (mounted) showAppToast(context, 'Please sign in again.'); setState(() => step = _TopUpStep.review); return; }
     try {
       if (AppConfig.useEdge) {
         // Live Paystack: init checkout, open browser, credit happens via webhook.
@@ -47,12 +48,14 @@ class _TopUpScreenState extends State<TopUpScreen> {
         final init = await PaystackService.init(email: email, amountKobo: amountKobo, reference: ref);
         final url = Uri.tryParse(init['authorization_url']?.toString() ?? '');
         if (url != null) await launchUrl(url, mode: LaunchMode.externalApplication);
-        _toast('Complete payment in browser — wallet credits automatically. Ref $ref');
+        if (mounted) showAppToast(context, 'Complete payment in browser — wallet credits automatically. Ref $ref');
         setState(() => step = _TopUpStep.review);
         return;
       }
       await Future.delayed(const Duration(milliseconds: 1800));
       // Demo fallback: debug only. Release requires Paystack Edge + webhook.
+      // NOTE: demo writes directly to tables for UI exploration only. Production
+      // has no client insert policy — all credits go through credit_wallet_for_topup via webhook.
       if (kReleaseMode) throw Exception('Live top-up not configured. Deploy paystack-init/webhook and rebuild with --dart-define=USE_EDGE=true.');
       final ref = generateReference();
       await AppConfig.client.from('transactions').insert({
@@ -86,8 +89,9 @@ class _TopUpScreenState extends State<TopUpScreen> {
       }
       await accountStore.refresh();
       setState(() => step = _TopUpStep.success);
-    } catch (e) {
-      _toast('Top-up failed: ${e.toString().replaceFirst('Exception: ', '')}');
+    } catch (e, stack) {
+      logError('TopUpScreen.fund failed', e, stack);
+      if (mounted) showAppToast(context, 'Top-up failed: ${friendlyError(e)}');
       setState(() => step = _TopUpStep.review);
     }
   }
@@ -95,9 +99,6 @@ class _TopUpScreenState extends State<TopUpScreen> {
   String _methodLabel() {
     return methods.firstWhere((m) => m.id == selectedMethod, orElse: () => methods.first).label;
   }
-
-  void _toast(String msg) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
   @override
   Widget build(BuildContext context) {
@@ -126,12 +127,19 @@ class _TopUpScreenState extends State<TopUpScreen> {
         const SizedBox(height: 10),
         Text('How much do you want to add?', style: displayStyleOf(context,size: 22)),
         const SizedBox(height: 6),
-        const Text('Minimum top-up is ₦100.', style: TextStyle(color: AppColors.mutedForeground)),
+        Text('Minimum top-up is ₦100.', style: TextStyle(color: mutedColorOf(context))),
+        if (!AppConfig.useEdge) ...[
+          const SizedBox(height: 12),
+          const InfoBanner(
+            message: 'Demo mode — no real money moves. Rebuild with USE_EDGE=true for live Paystack.',
+            icon: Icons.science_outlined,
+          ),
+        ],
         const SizedBox(height: 24),
         // Amount input
         Container(
           decoration: BoxDecoration(
-            color: AppColors.card,
+            color: cardColorOf(context),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: amountKobo > 0 && !amountValid ? AppColors.destructive : AppColors.input),
           ),
@@ -163,7 +171,7 @@ class _TopUpScreenState extends State<TopUpScreen> {
             style: OutlinedButton.styleFrom(
               backgroundColor: rawAmount == '$a' ? AppColors.primary : null,
               foregroundColor: rawAmount == '$a' ? Colors.white : AppColors.foreground,
-              side: BorderSide(color: rawAmount == '$a' ? AppColors.primary : AppColors.border),
+              side: BorderSide(color: rawAmount == '$a' ? AppColors.primary : borderColorOf(context)),
             ),
             onPressed: () {
               setState(() => rawAmount = '$a');
@@ -184,7 +192,7 @@ class _TopUpScreenState extends State<TopUpScreen> {
               duration: const Duration(milliseconds: 200),
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: AppColors.card,
+                color: cardColorOf(context),
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
                   color: selectedMethod == m.id ? AppColors.primary : AppColors.border,
@@ -203,7 +211,7 @@ class _TopUpScreenState extends State<TopUpScreen> {
                 const SizedBox(width: 14),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(m.label, style: const TextStyle(fontWeight: FontWeight.w800)),
-                  Text(m.sub, style: const TextStyle(color: AppColors.mutedForeground, fontSize: 12)),
+                  Text(m.sub, style: TextStyle(color: mutedColorOf(context), fontSize: 12)),
                 ])),
                 if (selectedMethod == m.id)
                   const Icon(Icons.check_circle, color: AppColors.primary),
@@ -231,14 +239,14 @@ class _TopUpScreenState extends State<TopUpScreen> {
         const SizedBox(height: 10),
         Text('Review your top-up', style: displayStyleOf(context,size: 22)),
         const SizedBox(height: 6),
-        const Text('Confirm the details below before proceeding.', style: TextStyle(color: AppColors.mutedForeground)),
+        Text('Confirm the details below before proceeding.', style: TextStyle(color: mutedColorOf(context))),
         const SizedBox(height: 24),
         Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: AppColors.card,
+            color: cardColorOf(context),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.border),
+            border: Border.all(color: borderColorOf(context)),
           ),
           child: Column(children: [
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -251,14 +259,14 @@ class _TopUpScreenState extends State<TopUpScreen> {
             const SizedBox(height: 16),
             Text(formatNaira(amountKobo), style: displayStyleOf(context,size: 36)),
             const SizedBox(height: 4),
-            const Text('to DataVault wallet', style: TextStyle(color: AppColors.mutedForeground)),
+            Text('to DataVault wallet', style: TextStyle(color: mutedColorOf(context))),
           ]),
         ),
         const SizedBox(height: 20),
-        _row('Amount', formatNaira(amountKobo)),
-        _row('Payment method', _methodLabel()),
-        _row('Destination', 'DataVault Wallet'),
-        _row('Processing fee', 'Free'),
+        ReceiptRow('Amount', formatNaira(amountKobo)),
+        ReceiptRow('Payment method', _methodLabel()),
+        ReceiptRow('Destination', 'DataVault Wallet'),
+        ReceiptRow('Processing fee', 'Free'),
         const SizedBox(height: 24),
         Container(
           padding: const EdgeInsets.all(14),
@@ -302,7 +310,7 @@ class _TopUpScreenState extends State<TopUpScreen> {
           const SizedBox(height: 24),
           Text('Processing top-up', style: displayStyleOf(context,size: 22)),
           const SizedBox(height: 8),
-          const Text('Please wait while we fund your wallet.', textAlign: TextAlign.center, style: TextStyle(color: AppColors.mutedForeground)),
+          Text('Please wait while we fund your wallet.', textAlign: TextAlign.center, style: TextStyle(color: mutedColorOf(context))),
           const SizedBox(height: 28),
           const Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(Icons.verified_user_rounded, color: AppColors.success, size: 16),
@@ -334,7 +342,7 @@ class _TopUpScreenState extends State<TopUpScreen> {
         const SizedBox(height: 12),
         Text('Wallet funded!', style: displayStyleOf(context,size: 26)),
         const SizedBox(height: 8),
-        Text('${formatNaira(amountKobo)} has been added to your wallet.', textAlign: TextAlign.center, style: const TextStyle(color: AppColors.mutedForeground)),
+        Text('${formatNaira(amountKobo)} has been added to your wallet.', textAlign: TextAlign.center, style: TextStyle(color: mutedColorOf(context))),
         const SizedBox(height: 28),
         Container(
           padding: const EdgeInsets.all(20),
@@ -349,9 +357,9 @@ class _TopUpScreenState extends State<TopUpScreen> {
           ]),
         ),
         const SizedBox(height: 24),
-        _row('Amount added', formatNaira(amountKobo)),
-        _row('Method', _methodLabel()),
-        _row('Status', 'Successful'),
+        ReceiptRow('Amount added', formatNaira(amountKobo)),
+        ReceiptRow('Method', _methodLabel()),
+        ReceiptRow('Status', 'Successful'),
         const SizedBox(height: 24),
         SizedBox(
           width: double.infinity, height: 54,
@@ -372,12 +380,4 @@ class _TopUpScreenState extends State<TopUpScreen> {
     );
   }
 
-  Widget _row(String k, String v) => Container(
-    decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.border))),
-    padding: const EdgeInsets.symmetric(vertical: 10),
-    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      Text(k, style: const TextStyle(color: AppColors.mutedForeground)),
-      Text(v, style: const TextStyle(fontWeight: FontWeight.w800)),
-    ]),
-  );
 }

@@ -77,13 +77,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await accountStore.refresh();
     } catch (e) {
       setState(() => _uploadingAvatar = false);
-      _toast('Avatar upload failed: ${e.toString().replaceFirst('Exception: ', '')}');
+      showAppToast(context, 'Avatar upload failed: ${e.toString().replaceFirst('Exception: ', '')}');
     }
   }
 
   Future<void> save() async {
     if (name.text.trim().length < 2) {
-      _toast('Enter your full name');
+      showAppToast(context, 'Enter your full name');
       return;
     }
     setState(() => busy = true);
@@ -95,16 +95,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
       'push_notifications': pushN,
     }).eq('id', id ?? '');
     setState(() => busy = false);
-    _toast('Profile updated');
+    showAppToast(context, 'Profile updated');
     await accountStore.refresh();
   }
 
   Future<void> logout() async {
+    await accountStore.clearOnLogout();
     await AppConfig.client.auth.signOut();
     if (mounted) context.go('/auth');
   }
 
-  void _toast(String msg) =>
+  void showAppToast(context, String msg) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
   @override
