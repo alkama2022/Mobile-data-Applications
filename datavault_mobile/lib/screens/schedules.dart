@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../config.dart';
 import '../format.dart';
 import '../models.dart';
+import '../purchase_data.dart';
 import '../services/schedule_service.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -129,33 +130,73 @@ class _ScheduleForm extends StatefulWidget {
 
 class _ScheduleFormState extends State<_ScheduleForm> {
   ServiceKind kind = ServiceKind.data;
+  ProviderDef? provider;
+  Product? product;
   final recipient = TextEditingController();
   final amountCtrl = TextEditingController();
   String frequency = 'monthly';
   DateTime nextRun = DateTime.now().add(const Duration(days: 1));
   bool saving = false;
 
+  List<ProviderDef> get _providers => providersByKind[kind] ?? [];
+  List<Product> get _products => provider?.products ?? [];
+  bool get _needsProduct =>
+      kind == ServiceKind.data ||
+      kind == ServiceKind.cable ||
+      kind == ServiceKind.education ||
+      kind == ServiceKind.internet;
+
+  @override
+  void initState() {
+    super.initState();
+    _resetProvider();
+  }
+
+  void _resetProvider() {
+    provider = _providers.isNotEmpty ? _providers.first : null;
+    product = _products.isNotEmpty ? _products.first : null;
+  }
+
+  int get _amountKobo =>
+      _needsProduct && product != null
+          ? product!.priceKobo
+          : (int.tryParse(amountCtrl.text.replaceAll(RegExp(r'\D'), '')) ?? 0) *
+              100;
+
   Future<void> _save() async {
-    final amountKobo = (int.tryParse(amountCtrl.text.replaceAll(RegExp(r'\D'), '')) ?? 0) * 100;
-    if (recipient.text.trim().isEmpty || amountKobo < 10000) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter recipient + min ₦100')));
+    if (recipient.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Enter a recipient / ID')));
+      return;
+    }
+    if (provider == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Select a provider')));
+      return;
+    }
+    if (_amountKobo < 10000) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Amount must be at least ₦100')));
       return;
     }
     setState(() => saving = true);
     try {
       await ScheduleService.create({
         'kind': kind.dbValue,
-        'provider': kind.shortTitle,
-        'provider_id': kind.dbValue,
+        'provider': provider!.name,
+        'provider_id': provider!.id,
+        if (_needsProduct && product != null) 'product_id': product!.id,
         'recipient': recipient.text.trim(),
-        'amount_kobo': amountKobo,
+        'amount_kobo': _amountKobo,
         'frequency': frequency,
         'next_run_at': nextRun.toUtc().toIso8601String(),
         'active': true,
       });
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(e.toString())));
     } finally {
       if (mounted) setState(() => saving = false);
     }
@@ -164,29 +205,129 @@ class _ScheduleFormState extends State<_ScheduleForm> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 20, right: 20, top: 20),
+      padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+          left: 20,
+          right: 20,
+          top: 20),
       child: SingleChildScrollView(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('New schedule', style: displayStyleOf(context,size: 20)),
+          Text('New schedule', style: displayStyleOf(context, size: 20)),
           const SizedBox(height: 12),
+
+          // ── Service ──────────────────────────────────────────────
           DropdownButtonFormField<ServiceKind>(
-            initialValue: kind,
-            items: ServiceKind.values.map((s) => DropdownMenuItem(value: s, child: Text(s.title))).toList(),
-            onChanged: (v) => setState(() => kind = v ?? kind),
+            value: kind,
+            items: ServiceKind.values
+                .map((s) =>
+                    DropdownMenuItem(value: s, child: Text(s.title)))
+                .toList(),
+            onChanged: (v) => setState(() {
+              kind = v ?? kind;
+              _resetProvider();
+            }),
             decoration: const InputDecoration(labelText: 'Service'),
           ),
           const SizedBox(height: 12),
-          TextField(controller: recipient, decoration: InputDecoration(labelText: kind.fieldLabel, hintText: kind.fieldPlaceholder)),
+
+          // ── Provider ─────────────────────────────────────────────
+          DropdownButtonFormField<ProviderDef>(
+            value: provider,
+            items: _providers
+                .map((p) =>
+                    DropdownMenuItem(value: p, child: Text(p.name)))
+                .toList(),
+            onChanged: (v) => setState(() {
+              provider = v;
+              product = v?.products?.isNotEmpty == true
+                  ? v!.products!.first
+                  : null;
+            }),
+            decoration: const InputDecoration(labelText: 'Provider'),
+          ),
           const SizedBox(height: 12),
-          TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Amount (₦)', hintText: '1000')),
+
+          // ── Product (data plans, cable packages, etc.) ───────────
+          if (_needsProduct && _products.isNotEmpty) ...[
+            DropdownButtonFormField<Product>(
+              value: product,
+              items: _products
+                  .map((p) => DropdownMenuItem(
+                      value: p,
+                      child: Text(
+                          '${p.name} · ${formatNaira(p.priceKobo).replaceAll('.00', '')}')))
+                  .toList(),
+              onChanged: (v) => setState(() => product = v),
+              decoration: const InputDecoration(labelText: 'Plan / product'),
+            ),
+            const SizedBox(height: 12),
+          ],
+
+          // ── Recipient ────────────────────────────────────────────
+          TextField(
+            controller: recipient,
+            keyboardType:
+                kind == ServiceKind.airtime || kind == ServiceKind.data
+                    ? TextInputType.phone
+                    : TextInputType.text,
+            decoration: InputDecoration(
+                labelText: provider?.inputLabel ?? kind.fieldLabel,
+                hintText:
+                    provider?.inputPlaceholder ?? kind.fieldPlaceholder),
+          ),
           const SizedBox(height: 12),
+
+          // ── Amount (only for services without fixed products) ────
+          if (!_needsProduct || _products.isEmpty) ...[
+            TextField(
+              controller: amountCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                  labelText: 'Amount (₦)', hintText: '1000'),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 12),
+          ] else ...[
+            // Show the resolved amount read-only for product-based services.
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                  color: AppColors.muted,
+                  borderRadius: BorderRadius.circular(12)),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Amount charged',
+                      style: TextStyle(
+                          color: AppColors.mutedForeground, fontSize: 13)),
+                  Text(
+                    product != null
+                        ? formatNaira(product!.priceKobo)
+                            .replaceAll('.00', '')
+                        : '—',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w800, fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+
+          // ── Frequency ────────────────────────────────────────────
           DropdownButtonFormField<String>(
-            initialValue: frequency,
-            items: const ['once', 'daily', 'weekly', 'monthly'].map((f) => DropdownMenuItem(value: f, child: Text(f))).toList(),
+            value: frequency,
+            items: const ['once', 'daily', 'weekly', 'monthly']
+                .map((f) =>
+                    DropdownMenuItem(value: f, child: Text(f)))
+                .toList(),
             onChanged: (v) => setState(() => frequency = v ?? frequency),
             decoration: const InputDecoration(labelText: 'Repeat'),
           ),
           const SizedBox(height: 12),
+
+          // ── First run date ───────────────────────────────────────
           ListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('First run'),
@@ -194,15 +335,23 @@ class _ScheduleFormState extends State<_ScheduleForm> {
             trailing: TextButton(
               child: const Text('Pick date'),
               onPressed: () async {
-                final d = await showDatePicker(context: context, firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365)));
+                final d = await showDatePicker(
+                    context: context,
+                    firstDate: DateTime.now(),
+                    lastDate:
+                        DateTime.now().add(const Duration(days: 365)));
                 if (d != null) setState(() => nextRun = d);
               },
             ),
           ),
           const SizedBox(height: 12),
+
           SizedBox(
-            width: double.infinity, height: 52,
-            child: FilledButton(onPressed: saving ? null : _save, child: Text(saving ? 'Saving…' : 'Save schedule')),
+            width: double.infinity,
+            height: 52,
+            child: FilledButton(
+                onPressed: saving ? null : _save,
+                child: Text(saving ? 'Saving…' : 'Save schedule')),
           ),
           const SizedBox(height: 24),
         ]),
