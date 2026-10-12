@@ -6,9 +6,14 @@ class AccountStore extends ChangeNotifier {
   bool loading = true;
   bool error = false;
   String? errorMessage;
+  bool _refreshing = false;
 
   Future<void> refresh() async {
-    loading = true;
+    if (_refreshing) return;
+    _refreshing = true;
+    // Only show full-screen loader on first load when we have no data.
+    final isFirstLoad = data.transactions.isEmpty && data.profile == null;
+    if (isFirstLoad) loading = true;
     error = false;
     errorMessage = null;
     notifyListeners();
@@ -19,6 +24,7 @@ class AccountStore extends ChangeNotifier {
       errorMessage = e.toString();
     }
     loading = false;
+    _refreshing = false;
     notifyListeners();
   }
 

@@ -46,3 +46,11 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Env / secrets - never commit live keys
+.env
+.env.*
+*.env
+android/key.properties
+*.jks
+*.keystore

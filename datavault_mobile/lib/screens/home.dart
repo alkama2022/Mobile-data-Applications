@@ -26,8 +26,9 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     if (accountStore.loading) accountStore.refresh();
     accountStore.addListener(_onChange);
-    // Fire-and-forget: run due auto-buys, then refresh balance
-    Future.microtask(() async {
+    // Fire-and-forget: delay auto-buy check so it never competes
+    // with the initial wallet/transactions fetch for bandwidth.
+    Future.delayed(const Duration(seconds: 2), () async {
       try {
         final ran = await ScheduleService.runDue();
         if (ran > 0) await accountStore.refresh();

@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.datavault_mobile"
+    namespace = "com.datavault.mobile"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = "30.0.16248370"
 
@@ -15,8 +15,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.datavault_mobile"
+        applicationId = "com.datavault.mobile"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -31,8 +30,10 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // Release signing via android/key.properties (not committed).
+            // Create with: keytool -genkey -v -keystore release.jks -alias datavault -keyalg RSA -keysize 2048 -validity 10000
+            // and android/key.properties with storeFile, storePassword, keyAlias, keyPassword.
+            // Falls back to debug keys so `flutter run --release` still works locally.
             signingConfig = signingConfigs.getByName("debug")
         }
     }

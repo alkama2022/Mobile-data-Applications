@@ -66,5 +66,11 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>DataVault needs camera access to capture your profile photo.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>DataVault needs photo library access to choose your profile photo.</string>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>DataVault sends payment and transaction alerts.</string>
 </dict>
 </plist>

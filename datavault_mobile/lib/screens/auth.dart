@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../account_store.dart';
@@ -38,10 +39,18 @@ class _AuthScreenState extends State<AuthScreen> {
       } else {
         await AppConfig.client.auth.signInWithPassword(email: email.text.trim(), password: password.text);
       }
-      await accountStore.refresh();
+      await accountStore.refresh().timeout(const Duration(seconds: 15));
       if (mounted) context.go('/app');
-    } catch (e) {
-      _toast(e.toString().replaceFirst('Exception: ', ''));
+    } on Exception catch (e) {
+      // Fast path: if data fetch is slow/offline, still enter app shell.
+      // HomeScreen will retry refresh and show cached/skeleton state.
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      if (AppConfig.client.auth.currentUser != null) {
+        if (mounted) context.go('/app');
+        unawaited(accountStore.refresh());
+      } else {
+        _toast(msg);
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }

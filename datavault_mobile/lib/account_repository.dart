@@ -41,9 +41,9 @@ class AccountRepository {
 
     final results = await Future.wait([
       AppConfig.client.from('wallets').select().eq('user_id', user.id).maybeSingle(),
-      AppConfig.client.from('transactions').select().eq('user_id', user.id).order('created_at', ascending: false),
-      AppConfig.client.from('notifications').select().eq('user_id', user.id).order('created_at', ascending: false),
-      AppConfig.client.from('beneficiaries').select().eq('user_id', user.id).order('created_at', ascending: false),
+      AppConfig.client.from('transactions').select().eq('user_id', user.id).order('created_at', ascending: false).limit(25),
+      AppConfig.client.from('notifications').select().eq('user_id', user.id).order('created_at', ascending: false).limit(20),
+      AppConfig.client.from('beneficiaries').select().eq('user_id', user.id).order('created_at', ascending: false).limit(50),
     ]);
 
     return AccountData(

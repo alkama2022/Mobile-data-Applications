@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -128,7 +129,12 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
         });
         return;
       }
-      // Demo fallback (no secrets configured)
+      // Demo fallback (no secrets configured) - debug only.
+      if (kReleaseMode) {
+        setState(() => verifying = false);
+        _toast('Live verification not configured. Deploy Edge Functions first.');
+        return;
+      }
       await Future.delayed(const Duration(milliseconds: 700));
       if (recipient.text.endsWith('000')) {
         setState(() {
@@ -204,6 +210,7 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
           extraMetadata: metadata,
         );
       } else {
+        if (kReleaseMode) throw Exception('Live payments not configured. Deploy vtu-pay Edge Function and rebuild with --dart-define=USE_EDGE=true.');
         data = await AppConfig.client.from('transactions').insert({
           'user_id': user.id,
           'kind': service.dbValue,
@@ -533,7 +540,7 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(border: Border.all(color: AppColors.primary), borderRadius: BorderRadius.circular(12), color: AppColors.primarySoft),
-              child: const Row(children: [Icon(Icons.wallet_rounded, color: AppColors.primary), SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Pay with DataVault wallet', style: TextStyle(fontWeight: FontWeight.w800)), Text('Your demo balance will be charged once.', style: TextStyle(color: AppColors.mutedForeground, fontSize: 12))])), Icon(Icons.check_circle, color: AppColors.primary)]),
+              child: const Row(children: [Icon(Icons.wallet_rounded, color: AppColors.primary), SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Pay with DataVault wallet', style: TextStyle(fontWeight: FontWeight.w800)), Text('Balance debits atomically via secure ledger.', style: TextStyle(color: AppColors.mutedForeground, fontSize: 12))])), Icon(Icons.check_circle, color: AppColors.primary)]),
             ),
             const SizedBox(height: 16),
             SizedBox(width: double.infinity, height: 54, child: FilledButton(onPressed: pay, child: Text('Pay ${formatNaira(totalKobo)}'))),

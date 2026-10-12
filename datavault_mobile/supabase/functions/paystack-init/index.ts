@@ -16,10 +16,12 @@ serve(async (req) => {
     if (!email || !amount_kobo || amount_kobo < 10000) {
       return Response.json({ ok: false, message: 'Valid email and min ₦100 required' }, { status: 400 });
     }
+    const paystackKey = Deno.env.get('PAYSTACK_SECRET_KEY');
+    if (!paystackKey) return Response.json({ ok: false, message: 'Paystack key not configured' }, { status: 500 });
     const r = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${Deno.env.get('PAYSTACK_SECRET_KEY') ?? ''}`,
+        'Authorization': `Bearer ${paystackKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

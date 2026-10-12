@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../account_store.dart';
@@ -51,7 +52,8 @@ class _TopUpScreenState extends State<TopUpScreen> {
         return;
       }
       await Future.delayed(const Duration(milliseconds: 1800));
-      // Demo fallback: simulate a successful top-up.
+      // Demo fallback: debug only. Release requires Paystack Edge + webhook.
+      if (kReleaseMode) throw Exception('Live top-up not configured. Deploy paystack-init/webhook and rebuild with --dart-define=USE_EDGE=true.');
       final ref = generateReference();
       await AppConfig.client.from('transactions').insert({
         'user_id': user.id,

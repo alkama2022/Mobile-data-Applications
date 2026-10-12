@@ -3,10 +3,13 @@
 // Secrets (set via `supabase secrets set`): VTPASS_API_KEY, VTPASS_SECRET_KEY, VTPASS_BASE_URL, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 
-const BASE = Deno.env.get('VTPASS_BASE_URL') ?? 'https://sandbox.vtpass.com';
+const BASE = Deno.env.get('VTPASS_BASE_URL') ?? 'https://vtpass.com';
 
 serve(async (req) => {
   if (req.method !== 'POST') return Response.json({ ok: false, message: 'POST only' }, { status: 405 });
+  const apiKey = Deno.env.get('VTPASS_API_KEY');
+  const secretKey = Deno.env.get('VTPASS_SECRET_KEY');
+  if (!apiKey || !secretKey) return Response.json({ ok: false, message: 'VTpass keys not configured' }, { status: 500 });
   try {
     const { serviceID, billersCode } = await req.json();
     if (!serviceID || !billersCode) {
@@ -16,8 +19,8 @@ serve(async (req) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'api-key': Deno.env.get('VTPASS_API_KEY') ?? '',
-        'secret-key': Deno.env.get('VTPASS_SECRET_KEY') ?? '',
+        'api-key': apiKey,
+        'secret-key': secretKey,
       },
       body: JSON.stringify({ serviceID, billersCode }),
     });
