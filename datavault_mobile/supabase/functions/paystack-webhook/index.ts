@@ -26,11 +26,8 @@ serve(async (req) => {
     const email: string = event.data.customer?.email ?? '';
     const userId: string | undefined = event.data.metadata?.user_id;
 
-    // Idempotency: skip if reference already recorded
-    const { data: existing } = await supa.from('transactions').select('id').eq('reference', ref).maybeSingle();
-    if (existing) return Response.json({ ok: true, duplicate: true });
-
-    // Verify with Paystack server-side (never trust webhook body alone)
+    // Verify with Paystack server-side before crediting anything
+    // (never trust webhook body alone — always re-verify the reference).
     const vr = await fetch(`https://api.paystack.co/transaction/verify/${ref}`, {
       headers: { Authorization: `Bearer ${Deno.env.get('PAYSTACK_SECRET_KEY') ?? ''}` },
     });
@@ -41,19 +38,33 @@ serve(async (req) => {
     const uid = userId ?? null;
     if (!uid) return Response.json({ ok: false, message: 'No user_id in metadata' }, { status: 400 });
 
-    await supa.from('transactions').insert({
+    // Insert the transaction record first (reference unique index provides idempotency
+    // at the DB level — a duplicate webhook will fail here before touching the wallet).
+    const { error: txErr } = await supa.from('transactions').insert({
       user_id: uid, kind: 'wallet_funding', title: 'Wallet Top-up',
       recipient: 'DataVault Wallet', amount_kobo: amount,
       reference: ref, provider: 'Paystack', status: 'success',
       metadata: { method: 'card', channel: 'Paystack', email },
     });
-    // Upsert + credit
-    const { data: wallet } = await supa.from('wallets').select().eq('user_id', uid).maybeSingle();
-    if (!wallet) {
-      await supa.from('wallets').insert({ user_id: uid, balance_kobo: amount });
-    } else {
-      await supa.from('wallets').update({ balance_kobo: (wallet.balance_kobo ?? 0) + amount }).eq('user_id', uid);
+    if (txErr) {
+      // Unique-constraint violation means this reference was already processed.
+      if (txErr.code === '23505') return Response.json({ ok: true, duplicate: true });
+      return Response.json({ ok: false, message: 'Failed to record transaction: ' + txErr.message }, { status: 500 });
     }
+
+    // Use the atomic credit_wallet RPC (see migrations/001_wallet_ledger.sql).
+    // This is an upsert + increment in a single SQL statement — safe under concurrent
+    // webhook deliveries because the transaction insert above already acted as a lock.
+    const { error: creditErr } = await supa.rpc('credit_wallet', {
+      p_user_id: uid,
+      p_amount_kobo: amount,
+    });
+    if (creditErr) {
+      // The transaction row was written but the credit failed — log for manual review.
+      console.error('credit_wallet failed for ref', ref, creditErr.message);
+      return Response.json({ ok: false, message: 'Wallet credit failed: ' + creditErr.message }, { status: 500 });
+    }
+
     return Response.json({ ok: true });
   } catch (e) {
     return Response.json({ ok: false, message: String(e) }, { status: 500 });

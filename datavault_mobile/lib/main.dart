@@ -7,9 +7,11 @@ import 'theme_store.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Fail fast on mis-configured builds before any UI is shown.
+  AppConfig.assertConfigured();
   await Supabase.initialize(
     url: AppConfig.supabaseUrl,
-    publishableKey: AppConfig.supabaseAnonKey,
+    anonKey: AppConfig.supabaseAnonKey,
   );
   runApp(const DataVaultApp());
 }
